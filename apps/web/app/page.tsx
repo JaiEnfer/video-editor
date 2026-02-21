@@ -13,6 +13,8 @@ export default function Home() {
   const [downloadUrl, setDownloadUrl] = useState<string>("");
   const [downloadName, setDownloadName] = useState<string>("edited.mp4");
 
+  const MAX_UPLOAD_MB = 500; 
+  
   const targetSeconds = useMemo(() => {
     const m = Number.isFinite(minutes) ? minutes : 0;
     const s = Number.isFinite(seconds) ? seconds : 0;
@@ -29,6 +31,13 @@ export default function Home() {
       setError("Please select a video file.");
       return;
     }
+
+    const fileSizeMB = file.size / 1024 / 1024;
+    if (fileSizeMB > MAX_UPLOAD_MB) {
+      setError(`File too large. Max allowed is ${MAX_UPLOAD_MB} MB.`);
+      return;
+    }
+
     if (targetSeconds <= 0) {
       setError("Target duration must be at least 1 second.");
       return;
@@ -48,10 +57,20 @@ export default function Home() {
 
       if (!res.ok) {
         let detail = `Request failed (${res.status})`;
+
         try {
           const data = await res.json();
           if (data?.detail) detail = data.detail;
         } catch {}
+
+        if (res.status === 413) {
+          detail = "File too large. Please upload a smaller video.";
+        }
+
+        if (res.status === 429) {
+          detail = "Too many requests. Please wait and try again.";
+        }
+
         throw new Error(detail);
       }
 
@@ -73,19 +92,35 @@ export default function Home() {
   }
 
   return (
-    <main style={{ maxWidth: 720, margin: "40px auto", padding: 16, fontFamily: "system-ui, sans-serif" }}>
+    <main
+      style={{
+        maxWidth: 720,
+        margin: "40px auto",
+        padding: 16,
+        fontFamily: "system-ui, sans-serif",
+      }}
+    >
       <h1 style={{ fontSize: 28, marginBottom: 6 }}>Video Editor (FFmpeg)</h1>
       <p style={{ marginTop: 0, color: "#555" }}>
         Upload a video, set a target duration (shorter or longer), choose whether to keep audio, and download the result.
       </p>
 
-      <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16, marginTop: 16 }}>
+      <div
+        style={{
+          border: "1px solid #ddd",
+          borderRadius: 12,
+          padding: 16,
+          marginTop: 16,
+        }}
+      >
         <label style={{ display: "block", fontWeight: 600, marginBottom: 8 }}>Video file</label>
         <input
           type="file"
           accept="video/*"
           onChange={(e) => setFile(e.target.files?.[0] || null)}
+          disabled={isSubmitting}
         />
+
         {file && (
           <div style={{ marginTop: 8, color: "#555" }}>
             Selected: <b>{file.name}</b> ({Math.round(file.size / 1024 / 1024)} MB)
@@ -104,8 +139,10 @@ export default function Home() {
               value={minutes}
               onChange={(e) => setMinutes(parseInt(e.target.value || "0", 10))}
               style={{ width: 120, padding: 8 }}
+              disabled={isSubmitting}
             />
           </div>
+
           <div>
             <div style={{ fontSize: 12, color: "#666" }}>Seconds</div>
             <input
@@ -115,6 +152,7 @@ export default function Home() {
               value={seconds}
               onChange={(e) => setSeconds(parseInt(e.target.value || "0", 10))}
               style={{ width: 120, padding: 8 }}
+              disabled={isSubmitting}
             />
           </div>
 
@@ -129,6 +167,7 @@ export default function Home() {
               type="checkbox"
               checked={keepAudio}
               onChange={(e) => setKeepAudio(e.target.checked)}
+              disabled={isSubmitting}
             />
             Keep audio
           </label>
@@ -142,12 +181,12 @@ export default function Home() {
               padding: "10px 14px",
               borderRadius: 10,
               border: "1px solid #111",
-              background: isSubmitting ? "#eee" : "#111",
-              color: isSubmitting ? "#555" : "#fff",
+              background: isSubmitting ? "#ccc" : "#111",
+              color: "#fff",
               cursor: isSubmitting ? "not-allowed" : "pointer",
             }}
           >
-            {isSubmitting ? "Processing..." : "Edit video"}
+            {isSubmitting ? "Processing video... Please wait" : "Edit video"}
           </button>
 
           {downloadUrl && (
@@ -168,7 +207,7 @@ export default function Home() {
         )}
 
         <p style={{ marginTop: 16, color: "#777", fontSize: 13 }}>
-          Note: making a video longer slows it down; making it shorter speeds it up. Very large videos may take time.
+          Note: making a video longer slows it down; making it shorter speeds it up. Large videos may take time.
         </p>
       </div>
     </main>

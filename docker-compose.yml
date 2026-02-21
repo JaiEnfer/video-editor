@@ -6,7 +6,8 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
-
+      - MAX_UPLOAD_MB=500
+      - RATE_LIMIT_PER_MINUTE=10
   web:
     build:
       context: ./apps/web
