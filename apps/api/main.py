@@ -10,6 +10,7 @@ import uuid
 from redis import Redis
 from rq import Queue
 from rq.job import Job
+from datetime import datetime, timezone
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,6 +47,17 @@ MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "10"))
 WINDOW_SECONDS = 60
+
+JOB_TTL_SECONDS = int(os.getenv("JOB_TTL_SECONDS", "3600"))
+
+def _uploads_dir() -> str:
+    return os.path.join(DATA_DIR, "uploads")
+
+def _outputs_dir() -> str:
+    return os.path.join(DATA_DIR, "outputs")
+
+def _job_output_path(job_id: str) -> str:
+    return os.path.join(_outputs_dir(), f"{job_id}.mp4")
 
 # In-memory per-IP request timestamps (MVP: good for single instance)
 _ip_hits: Dict[str, Deque[float]] = {}
@@ -326,3 +338,30 @@ def download(job_id: str):
         raise HTTPException(status_code=404, detail="Output not ready")
 
     return FileResponse(output_path, media_type="video/mp4", filename=f"edited_{job_id}.mp4")
+
+@app.post("/admin/cleanup")
+def cleanup_old_files():
+    """
+    Deletes uploads/outputs older than JOB_TTL_SECONDS.
+    Local-only admin endpoint (no auth) — do NOT expose publicly as-is.
+    """
+    now = time.time()
+    deleted = {"uploads": 0, "outputs": 0}
+
+    for folder_key, folder in [("uploads", _uploads_dir()), ("outputs", _outputs_dir())]:
+        if not os.path.isdir(folder):
+            continue
+        for name in os.listdir(folder):
+            path = os.path.join(folder, name)
+            try:
+                if not os.path.isfile(path):
+                    continue
+                age = now - os.path.getmtime(path)
+                if age > JOB_TTL_SECONDS:
+                    os.remove(path)
+                    deleted[folder_key] += 1
+            except Exception:
+                # best-effort cleanup
+                pass
+
+    return {"deleted": deleted, "ttl_seconds": JOB_TTL_SECONDS}
