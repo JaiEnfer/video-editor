@@ -6,26 +6,20 @@ on:
   pull_request:
 
 jobs:
-  docker-build-and-smoke-test:
+  docker-build-and-e2e:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # Build both images using docker compose
       - name: Build images
         run: docker compose build
 
-      # Start stack in background
       - name: Start stack
         run: docker compose up -d
 
-      # Simple wait (containers need a moment)
-      - name: Wait for API
+      - name: Wait for API health
         run: |
           for i in {1..30}; do
             if curl -fsS http://localhost:8000/health > /dev/null; then
@@ -39,11 +33,83 @@ jobs:
           docker compose logs api
           exit 1
 
-      # Optional: also confirm web container is running
       - name: Show running containers
         run: docker compose ps
 
-      # Always shut down at the end
+      - name: Generate small sample video
+        run: |
+          # Generate a tiny 3-second MP4 with test video + sine audio (fast + deterministic)
+          ffmpeg -y \
+            -f lavfi -i testsrc=size=320x240:rate=30 \
+            -f lavfi -i sine=frequency=1000 \
+            -t 3 \
+            -c:v libx264 -pix_fmt yuv420p \
+            -c:a aac \
+            sample.mp4
+          ls -lh sample.mp4
+
+      - name: Create job and wait for completion
+        run: |
+          python3 - << 'PY'
+          import json, subprocess, time, sys, os
+
+          # Create job targeting 2 seconds (forces speed change)
+          cmd = [
+              "curl", "-sS", "-X", "POST", "http://localhost:8000/jobs",
+              "-F", "target_seconds=2",
+              "-F", "keep_audio=true",
+              "-F", "video=@sample.mp4",
+          ]
+          out = subprocess.check_output(cmd, text=True)
+          data = json.loads(out)
+          job_id = data["job_id"]
+          print("job_id:", job_id)
+
+          # Poll status
+          for i in range(120):  # up to 120s
+              s = subprocess.check_output(["curl", "-sS", f"http://localhost:8000/jobs/{job_id}"], text=True)
+              st = json.loads(s)
+              status = st["status"]
+              print(f"poll {i}: {status}")
+              if status == "failed":
+                  raise SystemExit("Job failed: " + (st.get("error") or "unknown"))
+              if status == "finished":
+                  break
+              time.sleep(1)
+          else:
+              raise SystemExit("Timed out waiting for job to finish")
+
+          # Download output
+          subprocess.check_call(["curl", "-sS", f"http://localhost:8000/jobs/{job_id}/download", "-o", "out.mp4"])
+          if not os.path.exists("out.mp4") or os.path.getsize("out.mp4") < 1000:
+              raise SystemExit("Downloaded out.mp4 is missing or too small")
+
+          # Verify duration using ffprobe (allow some tolerance)
+          dur = subprocess.check_output([
+              "ffprobe", "-v", "error",
+              "-show_entries", "format=duration",
+              "-of", "default=noprint_wrappers=1:nokey=1",
+              "out.mp4"
+          ], text=True).strip()
+          d = float(dur)
+          print("output duration:", d)
+
+          # Tolerance: 2.0s +/- 0.35s
+          if not (1.65 <= d <= 2.35):
+              raise SystemExit(f"Duration out of expected range: {d}")
+          print("E2E job test passed.")
+          PY
+
+      - name: Logs on failure (api/worker)
+        if: failure()
+        run: |
+          echo "=== API LOGS ==="
+          docker compose logs api --tail 200
+          echo "=== WORKER LOGS ==="
+          docker compose logs worker --tail 200
+          echo "=== REDIS LOGS ==="
+          docker compose logs redis --tail 200
+
       - name: Shutdown
         if: always()
         run: docker compose down --volumes
