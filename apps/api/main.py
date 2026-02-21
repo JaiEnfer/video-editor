@@ -6,6 +6,10 @@ import tempfile
 import time
 from collections import deque
 from typing import Deque, Dict
+import uuid
+from redis import Redis
+from rq import Queue
+from rq.job import Job
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,8 +17,19 @@ from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from fastapi.responses import JSONResponse
+from jobs import process_video_job
 
 app = FastAPI(title="Video Editor API", version="0.3.1")
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+DATA_DIR = os.getenv("DATA_DIR", "/data")
+
+def redis_conn() -> Redis:
+    return Redis.from_url(REDIS_URL)
+
+def q() -> Queue:
+    return Queue("video", connection=redis_conn())
 
 # ---- CORS (dev-friendly). For production, replace "*" with your real domain(s).
 app.add_middleware(
@@ -246,3 +261,68 @@ async def edit_video(
 
         err = (e.stderr or "")[-2000:]
         raise HTTPException(status_code=500, detail=f"FFmpeg failed: {err}")
+
+@app.post("/jobs")
+async def create_job(
+    target_seconds: float = Form(..., gt=0),
+    keep_audio: bool = Form(True),
+    video: UploadFile = File(...),
+):
+    job_id = str(uuid.uuid4())
+
+    uploads_dir = os.path.join(DATA_DIR, "uploads")
+    outputs_dir = os.path.join(DATA_DIR, "outputs")
+    os.makedirs(uploads_dir, exist_ok=True)
+    os.makedirs(outputs_dir, exist_ok=True)
+
+    input_path = os.path.join(uploads_dir, f"{job_id}_{video.filename}")
+    output_path = os.path.join(outputs_dir, f"{job_id}.mp4")
+
+    # Save upload to shared volume
+    with open(input_path, "wb") as f:
+        shutil.copyfileobj(video.file, f)
+
+    # Enqueue job
+    job = q().enqueue(
+        process_video_job,
+        input_path,
+        output_path,
+        float(target_seconds),
+        bool(keep_audio),
+        job_id=job_id,
+        result_ttl=3600,   # keep result metadata for 1 hour
+        failure_ttl=3600,
+    )
+
+    return {
+        "job_id": job.id,
+        "status_url": f"/jobs/{job.id}",
+        "download_url": f"/jobs/{job.id}/download",
+    }
+
+@app.get("/jobs/{job_id}")
+def job_status(job_id: str):
+    try:
+        job = Job.fetch(job_id, connection=redis_conn())
+    except Exception:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    status = job.get_status()  # queued/started/finished/failed
+    response = {"job_id": job_id, "status": status}
+
+    if status == "failed":
+        response["error"] = str(job.exc_info)[-2000:] if job.exc_info else "Job failed"
+    if status == "finished":
+        # job.result contains dict returned by process_video_job
+        response["result"] = job.result
+
+    return response
+
+@app.get("/jobs/{job_id}/download")
+def download(job_id: str):
+    # Output file name is deterministic
+    output_path = os.path.join(DATA_DIR, "outputs", f"{job_id}.mp4")
+    if not os.path.exists(output_path):
+        raise HTTPException(status_code=404, detail="Output not ready")
+
+    return FileResponse(output_path, media_type="video/mp4", filename=f"edited_{job_id}.mp4")

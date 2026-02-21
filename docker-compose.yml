@@ -1,4 +1,9 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
   api:
     build:
       context: ./apps/api
@@ -8,6 +13,28 @@ services:
       - PYTHONUNBUFFERED=1
       - MAX_UPLOAD_MB=500
       - RATE_LIMIT_PER_MINUTE=10
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+    volumes:
+      - video_data:/data
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: ./apps/api
+    working_dir: /app
+    command: ["rq", "worker", "video", "--url", "redis://redis:6379/0"]
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+    volumes:
+      - video_data:/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+
   web:
     build:
       context: ./apps/web
@@ -17,3 +44,6 @@ services:
       - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
     depends_on:
       - api
+
+volumes:
+  video_data:

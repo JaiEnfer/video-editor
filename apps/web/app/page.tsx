@@ -1,6 +1,31 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+
+type JobCreateResponse = {
+  job_id: string;
+  status_url?: string;
+  download_url?: string;
+};
+
+type JobStatus =
+  | "queued"
+  | "started"
+  | "finished"
+  | "failed"
+  | "deferred"
+  | "scheduled";
+
+type JobStatusResponse = {
+  job_id: string;
+  status: JobStatus;
+  error?: string;
+  result?: any;
+};
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -13,19 +38,96 @@ export default function Home() {
   const [downloadUrl, setDownloadUrl] = useState<string>("");
   const [downloadName, setDownloadName] = useState<string>("edited.mp4");
 
-  const MAX_UPLOAD_MB = 500; 
-  
+  const [jobId, setJobId] = useState<string>("");
+  const [jobStatus, setJobStatus] = useState<JobStatus | "">("");
+  const [statusText, setStatusText] = useState<string>("");
+
+  const MAX_UPLOAD_MB = 200; // must match backend
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+
+  // Used to avoid setting state after a new request starts
+  const requestTokenRef = useRef(0);
+
   const targetSeconds = useMemo(() => {
     const m = Number.isFinite(minutes) ? minutes : 0;
     const s = Number.isFinite(seconds) ? seconds : 0;
     return Math.max(1, m * 60 + s);
   }, [minutes, seconds]);
 
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+  function friendlyStatus(s: JobStatus | "") {
+    switch (s) {
+      case "queued":
+        return "Queued…";
+      case "started":
+        return "Processing…";
+      case "finished":
+        return "Finished";
+      case "failed":
+        return "Failed";
+      case "deferred":
+        return "Deferred…";
+      case "scheduled":
+        return "Scheduled…";
+      default:
+        return "";
+    }
+  }
+
+  async function parseError(res: Response): Promise<string> {
+    let detail = `Request failed (${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.detail) detail = data.detail;
+    } catch {
+      // ignore
+    }
+
+    if (res.status === 413) return "File too large. Please upload a smaller video.";
+    if (res.status === 429) return "Too many requests. Please wait and try again.";
+    if (res.status === 0) return "Network error. Please check the API server.";
+    return detail;
+  }
+
+  async function pollJob(job_id: string, token: number) {
+    setJobStatus("queued");
+    setStatusText("Queued…");
+
+    // Up to ~10 minutes (600 * 1s)
+    for (let i = 0; i < 600; i++) {
+      // If a new request started, stop polling
+      if (requestTokenRef.current !== token) return;
+
+      const res = await fetch(`${apiBase}/jobs/${job_id}`, { cache: "no-store" });
+      if (!res.ok) {
+        throw new Error(await parseError(res));
+      }
+
+      const data = (await res.json()) as JobStatusResponse;
+
+      setJobStatus(data.status);
+      setStatusText(friendlyStatus(data.status));
+
+      if (data.status === "failed") {
+        throw new Error(data.error || "Job failed.");
+      }
+
+      if (data.status === "finished") {
+        return;
+      }
+
+      await sleep(1000);
+    }
+
+    throw new Error("Timed out waiting for processing. Please try again with a smaller video.");
+  }
 
   async function onSubmit() {
     setError("");
     setDownloadUrl("");
+    setDownloadName("edited.mp4");
+    setJobId("");
+    setJobStatus("");
+    setStatusText("");
 
     if (!file) {
       setError("Please select a video file.");
@@ -43,58 +145,61 @@ export default function Home() {
       return;
     }
 
+    // New request token cancels any previous polling
+    const token = ++requestTokenRef.current;
+
     setIsSubmitting(true);
+    setStatusText("Uploading…");
+
     try {
       const form = new FormData();
       form.append("target_seconds", String(targetSeconds));
       form.append("keep_audio", keepAudio ? "true" : "false");
       form.append("video", file);
 
-      const res = await fetch(`${apiBase}/edit`, {
+      const res = await fetch(`${apiBase}/jobs`, {
         method: "POST",
         body: form,
       });
 
       if (!res.ok) {
-        let detail = `Request failed (${res.status})`;
-
-        try {
-          const data = await res.json();
-          if (data?.detail) detail = data.detail;
-        } catch {}
-
-        if (res.status === 413) {
-          detail = "File too large. Please upload a smaller video.";
-        }
-
-        if (res.status === 429) {
-          detail = "Too many requests. Please wait and try again.";
-        }
-
-        throw new Error(detail);
+        throw new Error(await parseError(res));
       }
 
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const created = (await res.json()) as JobCreateResponse;
+      const id = created.job_id;
 
-      // try to use server filename if present
-      const disposition = res.headers.get("content-disposition") || "";
-      const match = disposition.match(/filename="?([^"]+)"?/i);
-      const nameFromHeader = match?.[1];
+      if (!id) {
+        throw new Error("API did not return a job_id.");
+      }
 
-      setDownloadName(nameFromHeader || `edited_${targetSeconds}s.mp4`);
-      setDownloadUrl(url);
+      setJobId(id);
+
+      // Poll until finished
+      await pollJob(id, token);
+
+      // If a new request started while polling, do nothing
+      if (requestTokenRef.current !== token) return;
+
+      setStatusText("Finished");
+      setDownloadName(`edited_${targetSeconds}s.mp4`);
+      setDownloadUrl(`${apiBase}/jobs/${id}/download`);
     } catch (e: any) {
+      if (requestTokenRef.current !== token) return;
       setError(e?.message || "Something went wrong.");
+      setJobStatus("failed");
+      setStatusText("Failed");
     } finally {
-      setIsSubmitting(false);
+      if (requestTokenRef.current === token) {
+        setIsSubmitting(false);
+      }
     }
   }
 
   return (
     <main
       style={{
-        maxWidth: 720,
+        maxWidth: 760,
         margin: "40px auto",
         padding: 16,
         fontFamily: "system-ui, sans-serif",
@@ -102,7 +207,7 @@ export default function Home() {
     >
       <h1 style={{ fontSize: 28, marginBottom: 6 }}>Video Editor (FFmpeg)</h1>
       <p style={{ marginTop: 0, color: "#555" }}>
-        Upload a video, set a target duration (shorter or longer), choose whether to keep audio, and download the result.
+        Upload a video, choose a target duration (shorter or longer), choose whether to keep audio, then download the result.
       </p>
 
       <div
@@ -186,8 +291,20 @@ export default function Home() {
               cursor: isSubmitting ? "not-allowed" : "pointer",
             }}
           >
-            {isSubmitting ? "Processing video... Please wait" : "Edit video"}
+            {isSubmitting ? "Working…" : "Edit video"}
           </button>
+
+          {statusText && (
+            <span style={{ color: jobStatus === "failed" ? "crimson" : "#555" }}>
+              {statusText}
+              {jobId ? (
+                <span style={{ color: "#777" }}>
+                  {" "}
+                  (Job: <code>{jobId.slice(0, 8)}…</code>)
+                </span>
+              ) : null}
+            </span>
+          )}
 
           {downloadUrl && (
             <a
@@ -200,14 +317,11 @@ export default function Home() {
           )}
         </div>
 
-        {error && (
-          <p style={{ marginTop: 12, color: "crimson" }}>
-            {error}
-          </p>
-        )}
+        {error && <p style={{ marginTop: 12, color: "crimson" }}>{error}</p>}
 
         <p style={{ marginTop: 16, color: "#777", fontSize: 13 }}>
           Note: making a video longer slows it down; making it shorter speeds it up. Large videos may take time.
+          Max upload: {MAX_UPLOAD_MB} MB.
         </p>
       </div>
     </main>
