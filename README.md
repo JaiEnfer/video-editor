@@ -61,10 +61,10 @@ docker compose up --build
 
 Open
 
-- Web UI: http://localhost:3000
-- API docs: http://localhost:8000/docs
-- API health: http://localhost:8000/health
-- API version: http://localhost:8000/version
+- [Web UI](http://localhost:3000)
+- [API docs](http://localhost:8000/docs)
+- [API health](http://localhost:8000/health)
+- [API version](http://localhost:8000/version)
 
 ---
 
