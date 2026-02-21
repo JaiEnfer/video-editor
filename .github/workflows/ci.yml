@@ -36,6 +36,13 @@ jobs:
       - name: Show running containers
         run: docker compose ps
 
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
+          ffprobe -version
+
       - name: Generate small sample video
         run: |
           # Generate a tiny 3-second MP4 with test video + sine audio (fast + deterministic)
