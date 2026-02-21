@@ -131,6 +131,9 @@ app.add_middleware(SimpleRateLimitMiddleware)
 def health():
     return {"status": "ok"}
 
+@app.get("/version")
+def version():
+    return {"service": "video-editor-api", "version": app.version}
 
 def probe_duration_seconds(path: str) -> float:
     cmd = [
