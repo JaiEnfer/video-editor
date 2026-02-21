@@ -1,4 +1,13 @@
-﻿# FFmpeg Web Video Editor (Async)
+![CI](https://github.com/YOUR_USERNAME/video-editor/actions/workflows/ci.yml/badge.svg)
+![Dockerized](https://img.shields.io/badge/dockerized-yes-blue?logo=docker)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green?logo=fastapi)
+![Redis](https://img.shields.io/badge/Redis-queue-red?logo=redis)
+![FFmpeg](https://img.shields.io/badge/FFmpeg-video_processing-black?logo=ffmpeg)
+![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)
+![Node](https://img.shields.io/badge/Node-20-green?logo=node.js)
+![License](https://img.shields.io/badge/license-MIT-green)
+ 
+# FFmpeg Web Video Editor (Async)
 
 A containerized web video editor that lets users upload a video, set a target duration (shorter or longer), optionally remove audio, and download the result.
 
