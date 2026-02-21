@@ -1,4 +1,4 @@
-![CI](https://github.com/YOUR_USERNAME/video-editor/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/JaiEnfer/video-editor/actions/workflows/ci.yml/badge.svg)
 ![Dockerized](https://img.shields.io/badge/dockerized-yes-blue?logo=docker)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green?logo=fastapi)
 ![Redis](https://img.shields.io/badge/Redis-queue-red?logo=redis)
