@@ -1,14 +1,24 @@
+# ---------- Build stage ----------
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+
+RUN npm run build
+
+# ---------- Runtime stage ----------
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Install dependencies first (better caching)
-COPY package*.json ./
-RUN npm ci
+ENV NODE_ENV=production
 
-# Copy source
-COPY . .
+COPY --from=builder /app ./
 
 EXPOSE 3000
 
-CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0", "--port", "3000"]
+CMD ["npm", "start"]
