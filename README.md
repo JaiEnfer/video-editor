@@ -37,45 +37,6 @@ flowchart LR
 
 ---
 
-# FFmpeg Web Video Editor (Async)
-
-A containerized web video editor that lets users upload a video, set a target duration (shorter or longer), optionally remove audio, and download the result.
-
-Built as a portfolio-grade project with a real async architecture:
-**Next.js Web → FastAPI API → Redis queue → RQ Worker → FFmpeg processing → Download**.
-
----
-
-## Features
-
-- Upload video from browser
-- Change duration to any target time (shorter or longer)
-- Optional audio removal
-- Async processing (job queue + status polling)
-- Download result when ready
-- Upload size limit and basic per-IP rate limiting (MVP safety)
-- Fully Dockerized services
-- GitHub Actions CI with end-to-end processing test
-
----
-
-## Architecture
-
-```mermaid
-flowchart LR
-  U[User Browser] --> W[Next.js Web]
-  W -->|POST /jobs| A[FastAPI API]
-  A --> R[(Redis)]
-  R -->|Queue: video| Q[RQ Worker]
-  Q -->|FFmpeg| F[Video Processing]
-  F --> V[(Shared Docker Volume)]
-  A -->|GET /jobs/{id}| W
-  W -->|GET /jobs/{id}/download| A
-  A --> V
-```
-
----
-
 ## Tech Stack
 
 - Frontend: Next.js (App Router)
