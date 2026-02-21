@@ -22,7 +22,7 @@ Built as a portfolio-grade project with a real async architecture:
 
 ## Architecture
 
-```mermaid
+```text
 flowchart LR
   U[User Browser] --> W[Next.js Web]
   W -->|POST /jobs| A[FastAPI API]
