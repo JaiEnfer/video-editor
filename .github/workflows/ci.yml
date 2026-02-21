@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  docker-build-and-smoke-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build both images using docker compose
+      - name: Build images
+        run: docker compose build
+
+      # Start stack in background
+      - name: Start stack
+        run: docker compose up -d
+
+      # Simple wait (containers need a moment)
+      - name: Wait for API
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8000/health > /dev/null; then
+              echo "API is up"
+              exit 0
+            fi
+            echo "Waiting for API..."
+            sleep 2
+          done
+          echo "API did not become ready in time"
+          docker compose logs api
+          exit 1
+
+      # Optional: also confirm web container is running
+      - name: Show running containers
+        run: docker compose ps
+
+      # Always shut down at the end
+      - name: Shutdown
+        if: always()
+        run: docker compose down --volumes
